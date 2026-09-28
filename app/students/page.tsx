@@ -11,19 +11,11 @@ import TableContainer from '@mui/material/TableContainer'
 import TableHead from '@mui/material/TableHead'
 import TableRow from '@mui/material/TableRow'
 import Typography from '@mui/material/Typography'
-import { createClient } from '@supabase/supabase-js'
 import ButtonAppBar from '../../components/navbar'
+import supabase from '../config/supabase'
 
 type Student = Record<string, unknown>
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_KEY
-
-if (!supabaseUrl || !supabaseKey) {
-  throw new Error('Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_KEY')
-}
-
-const supabase = createClient(supabaseUrl, supabaseKey)
 
 export default function Students() {
   const [students, setStudents] = useState<Student[]>([])

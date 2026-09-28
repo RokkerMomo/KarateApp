@@ -27,7 +27,7 @@
 
 body {
   background: var(--lightwhite);
-  color: var(--foreground);
+  /* color: var(--foreground); */
   font-family: var(--font-geist-sans), sans-serif;
   margin: 0;
 }
