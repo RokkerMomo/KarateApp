@@ -1,5 +1,6 @@
 import Button from '@mui/material/Button';
 import Image from 'next/image';
+import Link from 'next/link';
 import FrontIMG from '../public/FrontIMG.jpg';
 import ButtonAppBar from '../components/navbar';
 
@@ -18,9 +19,11 @@ const Home = () => {
             Kenshu Kan.
           </p>
           <div className="hero-actions">
-            <Button className="mainbutton" variant="contained">
-              Start training
-            </Button>
+            <Link href="/login">
+              <Button className="mainbutton" variant="contained">
+                Start training
+              </Button>
+            </Link>
             <span className="hero-note">Open to all experience levels</span>
           </div>
           <div className="hero-details" aria-label="Training details">
