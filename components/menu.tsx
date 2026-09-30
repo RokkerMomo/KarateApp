@@ -5,6 +5,7 @@ import MenuItem from '@mui/material/MenuItem';
 import IconButton from '@mui/material/IconButton';
 import MenuIcon from '@mui/icons-material/Menu';
 import Link from 'next/link';
+import supabase from '@/app/config/supabase';
 
 export default function BasicMenu() {
     const id = React.useId();
@@ -19,6 +20,11 @@ export default function BasicMenu() {
         setAnchorEl(null);
     };
 
+    const logout = async () => {
+        // Implement your logout logic here, e.g., clearing tokens, redirecting, etc.
+        let { error } = await supabase.auth.signOut()
+        console.log('User logged out');
+    }   
     return (
         <div>
             <IconButton
@@ -51,7 +57,9 @@ export default function BasicMenu() {
                 </Link>
                 <MenuItem onClick={handleClose}>Profile</MenuItem>
                 <MenuItem onClick={handleClose}>My account</MenuItem>
-                <MenuItem onClick={handleClose}>Logout</MenuItem>
+                <MenuItem onClick={logout}>
+                    Logout
+                </MenuItem>
             </Menu>
         </div>
     );
