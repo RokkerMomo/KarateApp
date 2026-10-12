@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Alert from '@mui/material/Alert'
 import CircularProgress from '@mui/material/CircularProgress'
 import Paper from '@mui/material/Paper'
@@ -15,12 +15,30 @@ import Button from '@mui/material/Button'
 import Link from 'next/link'
 import ButtonAppBar from '../../components/navbar'
 import supabase from '../config/supabase'
+import PeopleIcon from '@mui/icons-material/People';
+import CheckIcon from '@mui/icons-material/Check';
 
 type Student = Record<string, unknown>
 
+type PaymentCharge = {
+  alumno_id: string | number
+  fecha_vencimiento: string
+  estado: string
+  monto: number | string | null
+}
+
+type Payment = {
+  monto_pagado: number | string | null
+  fecha_pago: string
+}
+
+type PaymentStatus = 'up_to_date' | 'overdue' | 'unknown'
 
 export default function Students() {
   const [students, setStudents] = useState<Student[]>([])
+  const [charges, setCharges] = useState<PaymentCharge[]>([])
+  const [payments, setPayments] = useState<Payment[]>([])
+  const [paymentStatusByStudent, setPaymentStatusByStudent] = useState<Record<string, PaymentStatus>>({})
   const [visibleRowCount, setVisibleRowCount] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -32,9 +50,25 @@ export default function Students() {
 
   useEffect(() => {
     const loadStudents = async () => {
-      const { data, error: queryError } = await supabase
-        .from('alumnos')
-        .select('*', { count: 'exact' })
+      const currentMonthStart = new Date()
+      currentMonthStart.setDate(1)
+      currentMonthStart.setHours(0, 0, 0, 0)
+      const nextMonthStart = new Date(currentMonthStart)
+      nextMonthStart.setMonth(nextMonthStart.getMonth() + 1)
+
+      const [
+        { data, error: queryError },
+        { data: charges, error: chargesError },
+        { data: payments, error: paymentsError },
+      ] = await Promise.all([
+        supabase.from('alumnos').select('*', { count: 'exact' }),
+        supabase.from('cargos').select('alumno_id, fecha_vencimiento, estado, monto'),
+        supabase
+          .from('pagos')
+          .select('monto_pagado, fecha_pago')
+          .gte('fecha_pago', currentMonthStart.toISOString())
+          .lt('fecha_pago', nextMonthStart.toISOString()),
+      ])
 
       if (queryError) {
         setError(queryError.message)
@@ -43,26 +77,75 @@ export default function Students() {
         setVisibleRowCount(data?.length ?? 0)
       }
 
+      if (chargesError) {
+        setError((currentError) => currentError ?? `Could not load payment status: ${chargesError.message}`)
+      } else {
+        setCharges((charges ?? []) as PaymentCharge[])
+        const today = new Date()
+        const statusByStudent = ((charges ?? []) as PaymentCharge[]).reduce<Record<string, PaymentStatus>>(
+          (statuses, charge) => {
+            const studentKey = String(charge.alumno_id)
+            const isOverdue = charge.estado.toLocaleLowerCase() !== 'pagado'
+              && new Date(charge.fecha_vencimiento) <= today
+
+            if (isOverdue) statuses[studentKey] = 'overdue'
+            else if (!statuses[studentKey]) statuses[studentKey] = 'up_to_date'
+
+            return statuses
+          },
+          {},
+        )
+
+        setPaymentStatusByStudent(statusByStudent)
+      }
+
+      if (paymentsError) {
+        setError((currentError) => currentError ?? `Could not load monthly payments: ${paymentsError.message}`)
+      } else {
+        setPayments((payments ?? []) as Payment[])
+      }
+
       setLoading(false)
     }
 
     loadStudents()
   }, [])
 
-  const columns = students.length > 0 ? Object.keys(students[0]) : []
+  const studentColumns = students.length > 0 ? Object.keys(students[0]) : []
+  const visibleStudentColumns = studentColumns.filter((column) => !['id', 'creado_en'].includes(column))
+  const columns = [...visibleStudentColumns, 'payment_status']
+  const tableColumns = [
+    'student_identity',
+    ...visibleStudentColumns.filter((column) => !['nombre', 'apellido', 'cedula_dni'].includes(column)),
+    'payment_status',
+  ]
   const activeSortColumn = sortColumn || columns[0] || ''
+  const summary = useMemo(() => {
+    const activeStudents = students.filter((student) => String(student.estado ?? '').toLocaleLowerCase() === 'activo').length
+    const upToDateStudents = students.filter((student) => paymentStatusByStudent[String(student.id)] === 'up_to_date').length
+    const overdueStudents = students.filter((student) => paymentStatusByStudent[String(student.id)] === 'overdue').length
+    const collected = payments.reduce((total, payment) => total + Number(payment.monto_pagado ?? 0), 0)
+    const outstanding = charges.reduce((total, charge) => {
+      const amount = Number(charge.monto ?? 0)
+      if (charge.estado.toLocaleLowerCase() === 'pendiente') return total + amount
+      if (charge.estado.toLocaleLowerCase() === 'parcial') return total + amount / 2
+      return total
+    }, 0)
+
+    return { activeStudents, upToDateStudents, overdueStudents, collected, outstanding }
+  }, [charges, payments, paymentStatusByStudent, students])
   const normalizedSearch = searchTerm.trim().toLocaleLowerCase()
   const filteredStudents = students
     .filter((student) =>
       normalizedSearch
-        ? columns.some((column) => formatCellValue(student[column]).toLocaleLowerCase().includes(normalizedSearch))
+        ? columns.some((column) => formatCellValue(getCellValue(student, column, paymentStatusByStudent)).toLocaleLowerCase().includes(normalizedSearch))
         : true,
     )
     .sort((firstStudent, secondStudent) => {
       if (!activeSortColumn) return 0
 
-      const firstValue = formatCellValue(firstStudent[activeSortColumn])
-      const secondValue = formatCellValue(secondStudent[activeSortColumn])
+      const firstValue = formatCellValue(getCellValue(firstStudent, activeSortColumn, paymentStatusByStudent))
+      const secondValue = formatCellValue(getCellValue(secondStudent, activeSortColumn, paymentStatusByStudent))
       const comparison = firstValue.localeCompare(secondValue, undefined, { numeric: true, sensitivity: 'base' })
 
       return sortDirection === 'asc' ? comparison : -comparison
@@ -104,6 +187,43 @@ export default function Students() {
             </div>
           )}
         </div>
+
+        {!loading && !error && students.length > 0 && (
+          <div className="students-summary" aria-label="Student payment summary">
+            <article className="students-summary-card">
+              <div>
+                <span className="students-summary-label">Active students</span>
+                <strong>{summary.activeStudents}</strong>
+                <small>Registered in dojo</small>
+              </div>
+              <span className="students-summary-mark" aria-hidden="true"><PeopleIcon /></span>
+            </article>
+            <article className="students-summary-card students-summary-card-positive">
+              <div>
+                <span className="students-summary-label">Up to date</span>
+                <strong>{summary.upToDateStudents}</strong>
+                <small>{summary.activeStudents ? Math.round((summary.upToDateStudents / summary.activeStudents) * 100) : 0}% of active students</small>
+              </div>
+              <span className="students-summary-mark" aria-hidden="true"><CheckIcon /></span>
+            </article>
+            <article className="students-summary-card students-summary-card-alert">
+              <div>
+                <span className="students-summary-label">Payment overdue</span>
+                <strong>{summary.overdueStudents}</strong>
+                <small>Require follow-up</small>
+              </div>
+              <span className="students-summary-mark" aria-hidden="true">!</span>
+            </article>
+            <article className="students-summary-card students-summary-card-balance">
+              <div>
+                <span className="students-summary-label">Monthly balance</span>
+                <strong>${summary.collected.toFixed(2)}</strong>
+                <small>Outstanding: ${summary.outstanding.toFixed(2)}</small>
+              </div>
+              <span className="students-summary-mark" aria-hidden="true">$</span>
+            </article>
+          </div>
+        )}
 
         {loading && (
           <div className="students-state">
@@ -198,8 +318,8 @@ export default function Students() {
                 <Table stickyHeader aria-label="Students table">
                   <TableHead>
                     <TableRow>
-                      {columns.map((column) => (
-                        <TableCell key={column}>{column.replaceAll('_', ' ')}</TableCell>
+                      {tableColumns.map((column) => (
+                        <TableCell key={column}>{formatColumnLabel(column)}</TableCell>
                       ))}
                     </TableRow>
                   </TableHead>
@@ -212,9 +332,24 @@ export default function Students() {
                         key={String(student.id ?? rowIndex)}
                         className="student-row-link"
                       >
-                        {columns.map((column) => (
+                        {tableColumns.map((column) => (
                           <TableCell key={`${rowIndex}-${column}`}>
-                            {column === 'estado' ? (
+                            {column === 'student_identity' ? (
+                              <div className="student-identity-cell">
+                                <span className="student-avatar" aria-hidden="true">
+                                  {getStudentInitials(student)}
+                                </span>
+                                <div className="student-identity-details">
+                                  <strong>{formatCellValue(student.nombre)} {formatCellValue(student.apellido)}</strong>
+                                  <span>{formatCellValue(student.cedula_dni)}</span>
+                                </div>
+                              </div>
+                            ) : column === 'payment_status' ? (
+                              <span className={`student-status student-payment-${getPaymentStatusClass(paymentStatusByStudent[String(student.id)])}`}>
+                                <span className="student-status-dot" aria-hidden="true" />
+                                {formatPaymentStatus(paymentStatusByStudent[String(student.id)])}
+                              </span>
+                            ) : column === 'estado' ? (
                               <span className={`student-status student-status-${getStatusClass(student[column])}`}>
                                 <span className="student-status-dot" aria-hidden="true" />
                                 {formatCellValue(student[column])}
@@ -266,6 +401,36 @@ function formatCellValue(value: unknown) {
   if (value === null || value === undefined) return '-'
   if (typeof value === 'object') return JSON.stringify(value)
   return String(value)
+}
+
+function formatColumnLabel(column: string) {
+  if (column === 'student_identity') return 'Student'
+  if (column === 'payment_status') return 'Payment status'
+  return column.replaceAll('_', ' ')
+}
+
+function getStudentInitials(student: Student) {
+  const firstName = formatCellValue(student.nombre).trim()
+  const lastName = formatCellValue(student.apellido).trim()
+
+  return `${firstName.charAt(0)}${lastName.charAt(0)}`.toLocaleUpperCase()
+}
+
+function getCellValue(student: Student, column: string, paymentStatusByStudent: Record<string, PaymentStatus>) {
+  if (column === 'payment_status') return formatPaymentStatus(paymentStatusByStudent[String(student.id)])
+  return student[column]
+}
+
+function formatPaymentStatus(status: PaymentStatus | undefined) {
+  if (status === 'up_to_date') return 'Up to date'
+  if (status === 'overdue') return 'Payment overdue'
+  return 'No payment data'
+}
+
+function getPaymentStatusClass(status: PaymentStatus | undefined) {
+  if (status === 'up_to_date') return 'up-to-date'
+  if (status === 'overdue') return 'overdue'
+  return 'unknown'
 }
 
 function getStatusClass(value: unknown) {
