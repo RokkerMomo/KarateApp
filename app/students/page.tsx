@@ -17,6 +17,7 @@ import ButtonAppBar from '../../components/navbar'
 import supabase from '../config/supabase'
 import PeopleIcon from '@mui/icons-material/People';
 import CheckIcon from '@mui/icons-material/Check';
+import BasicModal from '../../components/modal'
 
 type Student = Record<string, unknown>
 
@@ -326,16 +327,19 @@ export default function Students() {
                   <TableBody>
                     {paginatedStudents.map((student, rowIndex) => (
                       <TableRow
-                        component={Link}
-                        href={`/students/${String(student.id)}`}
-                        hover
-                        key={String(student.id ?? rowIndex)}
-                        className="student-row-link"
+                        // component={Link}
+                        // href={`/students/${String(student.id)}`}
+                        // hover
+                        // key={String(student.id ?? rowIndex)}
+                        // className="student-row-link"
                       >
                         {tableColumns.map((column) => (
                           <TableCell key={`${rowIndex}-${column}`}>
                             {column === 'student_identity' ? (
-                              <div className="student-identity-cell">
+                              <Link
+                                className="student-identity-cell"
+                                href={`/students/${String(student.id)}`}
+                              >
                                 <span className="student-avatar" aria-hidden="true">
                                   {getStudentInitials(student)}
                                 </span>
@@ -343,11 +347,11 @@ export default function Students() {
                                   <strong>{formatCellValue(student.nombre)} {formatCellValue(student.apellido)}</strong>
                                   <span>{formatCellValue(student.cedula_dni)}</span>
                                 </div>
-                              </div>
+                              </Link>
                             ) : column === 'payment_status' ? (
                               <span className={`student-status student-payment-${getPaymentStatusClass(paymentStatusByStudent[String(student.id)])}`}>
                                 <span className="student-status-dot" aria-hidden="true" />
-                                {formatPaymentStatus(paymentStatusByStudent[String(student.id)])}
+                                <BasicModal status={formatPaymentStatus(paymentStatusByStudent[String(student.id)])} />
                               </span>
                             ) : column === 'estado' ? (
                               <span className={`student-status student-status-${getStatusClass(student[column])}`}>
