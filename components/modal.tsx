@@ -6,6 +6,7 @@ import Modal from '@mui/material/Modal';
 import Typography from '@mui/material/Typography';
 import CloseIcon from '@mui/icons-material/Close';
 import CreditCardIcon from '@mui/icons-material/CreditCard';
+import supabase from '../app/config/supabase';
 
 const modalStyle = {
   bgcolor: 'var(--mainblue)',
@@ -45,10 +46,104 @@ const fieldStyle = {
   p: 1.5,
 };
 
-export default function BasicModal({ status }: { status: string }) {
+type BasicModalProps = {
+  status: string;
+  studentId: string | number;
+  studentName: string;
+};
+
+type StudentCharge = {
+  id: string | number;
+  monto: number | string | null;
+  mes_periodo: number | null;
+  anio_periodo: number | null;
+  estado: string | null;
+  fecha_vencimiento: string | null;
+};
+
+export default function BasicModal({ status, studentId, studentName }: BasicModalProps) {
   const [open, setOpen] = React.useState(false);
-  const handleOpen = () => setOpen(true);
-  const handleClose = () => setOpen(false);
+  const [saving, setSaving] = React.useState(false);
+  const [loadingCharges, setLoadingCharges] = React.useState(false);
+  const [charges, setCharges] = React.useState<StudentCharge[]>([]);
+  const [error, setError] = React.useState<string | null>(null);
+  const handleOpen = () => {
+    setOpen(true);
+    setError(null);
+  };
+  const handleClose = () => {
+    if (!saving) {
+      setOpen(false);
+      setError(null);
+    }
+  };
+  React.useEffect(() => {
+    if (!open) return;
+
+    const loadCharges = async () => {
+      setLoadingCharges(true);
+      setCharges([]);
+      const { data, error: chargesError } = await supabase
+        .from('cargos')
+        .select('id, monto, mes_periodo, anio_periodo, estado, fecha_vencimiento')
+        .eq('alumno_id', studentId)
+        .order('fecha_vencimiento', { ascending: false });
+
+      if (chargesError) {
+        setError(`Could not load charges: ${chargesError.message}`);
+      } else {
+        setCharges((data ?? []) as StudentCharge[]);
+      }
+      setLoadingCharges(false);
+    };
+
+    loadCharges();
+  }, [open, studentId]);
+
+  const handleSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setSaving(true);
+    setError(null);
+
+    const formData = new FormData(event.currentTarget);
+    const cargoId = formData.get('cargo-id');
+    const amount = Number(formData.get('payment-amount'));
+    const method = String(formData.get('payment-method') ?? '').trim();
+    const reference = String(formData.get('payment-reference') ?? '').trim();
+
+    if (!cargoId || !charges.some((charge) => String(charge.id) === cargoId)) {
+      setError('Select a valid charge.');
+      setSaving(false);
+      return;
+    }
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setError('Enter a valid payment amount.');
+      setSaving(false);
+      return;
+    }
+    if (!method) {
+      setError('Select a payment method.');
+      setSaving(false);
+      return;
+    }
+
+    const { error: insertError } = await supabase.from('pagos').insert({
+      cargo_id: Number(cargoId),
+      monto_pagado: amount,
+      metodo: method,
+      referencia: reference || null,
+      fecha_pago: new Date().toISOString(),
+    });
+
+    if (insertError) {
+      setError(`Could not register payment: ${insertError.message}`);
+      setSaving(false);
+      return;
+    }
+
+    setSaving(false);
+    setOpen(false);
+  };
   const buttonColor = status === 'Payment overdue'
     ? 'error'
     : status === 'No payment data'
@@ -94,7 +189,7 @@ export default function BasicModal({ status }: { status: string }) {
                   Registrar pago de mensualidad
                 </Typography>
                 <Typography sx={{ color: 'rgba(244, 240, 233, 0.68)', fontSize: '0.9rem', mt: 0.4 }}>
-                  Alumno: <Box component="span" sx={{ color: 'var(--lightwhite)', fontWeight: 700 }}>Valeria Rivas</Box>
+                  Alumno: <Box component="span" sx={{ color: 'var(--lightwhite)', fontWeight: 700 }}>{studentName}</Box>
                 </Typography>
               </Box>
             </Box>
@@ -109,12 +204,33 @@ export default function BasicModal({ status }: { status: string }) {
 
           <Box
             component="form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              handleClose();
-            }}
+            onSubmit={handleSubmit}
             sx={{ display: 'flex', flexDirection: 'column', gap: 2.5 }}
           >
+            <Box>
+              <Typography component="label" htmlFor="cargo-id" sx={labelStyle}>
+                Cargo a liquidar
+              </Typography>
+              <Box
+                component="select"
+                defaultValue=""
+                disabled={loadingCharges || charges.length === 0}
+                id="cargo-id"
+                name="cargo-id"
+                required
+                sx={fieldStyle}
+              >
+                <option disabled value="">
+                  {loadingCharges ? 'Cargando cargos...' : charges.length === 0 ? 'No hay cargos disponibles' : 'Seleccione un cargo'}
+                </option>
+                {charges.map((charge) => (
+                  <option key={charge.id} value={charge.id}>
+                    {formatCharge(charge)}
+                  </option>
+                ))}
+              </Box>
+            </Box>
+
             <Box>
               <Typography component="label" htmlFor="payment-amount" sx={labelStyle}>
                 Monto a abonar ($)
@@ -136,9 +252,10 @@ export default function BasicModal({ status }: { status: string }) {
               </Typography>
               <Box component="select" defaultValue="" id="payment-method" name="payment-method" required sx={fieldStyle}>
                 <option disabled value="">Seleccione un método</option>
-                <option value="cash">Efectivo</option>
-                <option value="card">Tarjeta</option>
-                <option value="transfer">Transferencia</option>
+                <option value="efectivo">Efectivo</option>
+                <option value="tarjeta">Tarjeta</option>
+                <option value="transferencia">Transferencia</option>
+                <option value="deposito">Depósito</option>
               </Box>
             </Box>
 
@@ -171,9 +288,16 @@ export default function BasicModal({ status }: { status: string }) {
               El pago se registrará en la tabla de pagos y actualizará el estado del alumno.
             </Box>
 
+            {error && (
+              <Typography role="alert" sx={{ color: 'var(--mainred)', fontSize: '0.9rem', fontWeight: 700 }}>
+                {error}
+              </Typography>
+            )}
+
             <Box sx={{ display: 'flex', gap: 1.5, justifyContent: 'flex-end', mt: 1.5 }}>
               <Button
                 onClick={handleClose}
+                disabled={saving}
                 sx={{ color: 'rgba(244, 240, 233, 0.72)', fontSize: '0.9rem', fontWeight: 700, px: 2, py: 1.25, textTransform: 'none' }}
               >
                 Cancelar
@@ -181,6 +305,7 @@ export default function BasicModal({ status }: { status: string }) {
               <Button
                 type="submit"
                 variant="contained"
+                disabled={saving}
                 sx={{
                   bgcolor: 'var(--mainred)',
                   borderRadius: '10px',
@@ -193,7 +318,7 @@ export default function BasicModal({ status }: { status: string }) {
                   '&:hover': { bgcolor: '#bd3e34', boxShadow: 'none' },
                 }}
               >
-                Procesar pago
+                {saving ? 'Guardando...' : 'Procesar pago'}
               </Button>
             </Box>
           </Box>
@@ -210,3 +335,11 @@ const labelStyle = {
   fontWeight: 700,
   mb: 0.75,
 };
+
+function formatCharge(charge: StudentCharge) {
+  const period = charge.mes_periodo && charge.anio_periodo
+    ? `${String(charge.mes_periodo).padStart(2, '0')}/${charge.anio_periodo}`
+    : charge.fecha_vencimiento ?? 'Sin fecha';
+  const amount = Number(charge.monto ?? 0).toFixed(2);
+  return `${period} - $${amount} (${charge.estado ?? 'pendiente'})`;
+}

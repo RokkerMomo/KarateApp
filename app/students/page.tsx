@@ -327,6 +327,7 @@ export default function Students() {
                   <TableBody>
                     {paginatedStudents.map((student, rowIndex) => (
                       <TableRow
+                        key={String(student.id ?? rowIndex)}
                         // component={Link}
                         // href={`/students/${String(student.id)}`}
                         // hover
@@ -351,7 +352,11 @@ export default function Students() {
                             ) : column === 'payment_status' ? (
                               <span className={`student-status student-payment-${getPaymentStatusClass(paymentStatusByStudent[String(student.id)])}`}>
                                 <span className="student-status-dot" aria-hidden="true" />
-                                <BasicModal status={formatPaymentStatus(paymentStatusByStudent[String(student.id)])} />
+                                <BasicModal
+                                  status={formatPaymentStatus(paymentStatusByStudent[String(student.id)])}
+                                  studentId={String(student.id)}
+                                  studentName={`${formatCellValue(student.nombre)} ${formatCellValue(student.apellido)}`}
+                                />
                               </span>
                             ) : column === 'estado' ? (
                               <span className={`student-status student-status-${getStatusClass(student[column])}`}>
