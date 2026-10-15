@@ -22,8 +22,9 @@ export default function BasicMenu() {
 
     const logout = async () => {
         // Implement your logout logic here, e.g., clearing tokens, redirecting, etc.
-        let { error } = await supabase.auth.signOut()
-        console.log('User logged out');
+        const { error } = await supabase.auth.signOut()
+        if (error) console.error('Error logging out:', error)
+        else console.log('User logged out');
     }   
     return (
         <div>

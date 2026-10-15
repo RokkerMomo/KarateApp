@@ -50,6 +50,7 @@ type BasicModalProps = {
   status: string;
   studentId: string | number;
   studentName: string;
+  onPaymentSuccess?: () => void;
 };
 
 type StudentCharge = {
@@ -61,7 +62,7 @@ type StudentCharge = {
   fecha_vencimiento: string | null;
 };
 
-export default function BasicModal({ status, studentId, studentName }: BasicModalProps) {
+export default function BasicModal({ status, studentId, studentName, onPaymentSuccess }: BasicModalProps) {
   const [open, setOpen] = React.useState(false);
   const [saving, setSaving] = React.useState(false);
   const [loadingCharges, setLoadingCharges] = React.useState(false);
@@ -143,6 +144,7 @@ export default function BasicModal({ status, studentId, studentName }: BasicModa
 
     setSaving(false);
     setOpen(false);
+    onPaymentSuccess?.();
   };
   const buttonColor = status === 'Payment overdue'
     ? 'error'

@@ -22,10 +22,12 @@ import BasicModal from '../../components/modal'
 type Student = Record<string, unknown>
 
 type PaymentCharge = {
+  id?: string | number
   alumno_id: string | number
   fecha_vencimiento: string
   estado: string
   monto: number | string | null
+  pagos?: { monto_pagado: number | string | null }[] | null
 }
 
 type Payment = {
@@ -48,8 +50,11 @@ export default function Students() {
   const [sortDirection, setSortDirection] = useState<'asc' | 'desc'>('asc')
   const [currentPage, setCurrentPage] = useState(1)
   const [rowsPerPage, setRowsPerPage] = useState(10)
+  const [refreshIndex, setRefreshIndex] = useState(0)
 
   useEffect(() => {
+    let isMounted = true
+
     const loadStudents = async () => {
       const currentMonthStart = new Date()
       currentMonthStart.setDate(1)
@@ -63,13 +68,15 @@ export default function Students() {
         { data: payments, error: paymentsError },
       ] = await Promise.all([
         supabase.from('alumnos').select('*', { count: 'exact' }),
-        supabase.from('cargos').select('alumno_id, fecha_vencimiento, estado, monto'),
+        supabase.from('cargos').select('id, alumno_id, fecha_vencimiento, estado, monto, pagos(monto_pagado)'),
         supabase
           .from('pagos')
           .select('monto_pagado, fecha_pago')
           .gte('fecha_pago', currentMonthStart.toISOString())
           .lt('fecha_pago', nextMonthStart.toISOString()),
       ])
+
+      if (!isMounted) return
 
       if (queryError) {
         setError(queryError.message)
@@ -86,8 +93,13 @@ export default function Students() {
         const statusByStudent = ((charges ?? []) as PaymentCharge[]).reduce<Record<string, PaymentStatus>>(
           (statuses, charge) => {
             const studentKey = String(charge.alumno_id)
-            const isOverdue = charge.estado.toLocaleLowerCase() !== 'pagado'
-              && new Date(charge.fecha_vencimiento) <= today
+            const paid = Array.isArray(charge.pagos)
+              ? charge.pagos.reduce((total, p) => total + Number(p.monto_pagado ?? 0), 0)
+              : 0
+            const remaining = charge.estado?.toLocaleLowerCase() === 'pagado'
+              ? 0
+              : Math.max(0, Number(charge.monto ?? 0) - paid)
+            const isOverdue = remaining > 0 && new Date(charge.fecha_vencimiento) <= today
 
             if (isOverdue) statuses[studentKey] = 'overdue'
             else if (!statuses[studentKey]) statuses[studentKey] = 'up_to_date'
@@ -110,14 +122,34 @@ export default function Students() {
     }
 
     loadStudents()
-  }, [])
+
+    return () => {
+      isMounted = false
+    }
+  }, [refreshIndex])
+
+  const debtByStudent = useMemo(() => {
+    return charges.reduce<Record<string, number>>((debts, charge) => {
+      const studentKey = String(charge.alumno_id)
+      const paid = Array.isArray(charge.pagos)
+        ? charge.pagos.reduce((total, p) => total + Number(p.monto_pagado ?? 0), 0)
+        : 0
+      const remaining = charge.estado?.toLocaleLowerCase() === 'pagado'
+        ? 0
+        : Math.max(0, Number(charge.monto ?? 0) - paid)
+
+      debts[studentKey] = (debts[studentKey] ?? 0) + remaining
+      return debts
+    }, {})
+  }, [charges])
 
   const studentColumns = students.length > 0 ? Object.keys(students[0]) : []
   const visibleStudentColumns = studentColumns.filter((column) => !['id', 'creado_en'].includes(column))
-  const columns = [...visibleStudentColumns, 'payment_status']
+  const columns = [...visibleStudentColumns, 'debt', 'payment_status']
   const tableColumns = [
     'student_identity',
     ...visibleStudentColumns.filter((column) => !['nombre', 'apellido', 'cedula_dni'].includes(column)),
+    'debt',
     'payment_status',
   ]
   const activeSortColumn = sortColumn || columns[0] || ''
@@ -127,10 +159,11 @@ export default function Students() {
     const overdueStudents = students.filter((student) => paymentStatusByStudent[String(student.id)] === 'overdue').length
     const collected = payments.reduce((total, payment) => total + Number(payment.monto_pagado ?? 0), 0)
     const outstanding = charges.reduce((total, charge) => {
-      const amount = Number(charge.monto ?? 0)
-      if (charge.estado.toLocaleLowerCase() === 'pendiente') return total + amount
-      if (charge.estado.toLocaleLowerCase() === 'parcial') return total + amount / 2
-      return total
+      const paid = Array.isArray(charge.pagos)
+        ? charge.pagos.reduce((sum, p) => sum + Number(p.monto_pagado ?? 0), 0)
+        : 0
+      if (charge.estado?.toLocaleLowerCase() === 'pagado') return total
+      return total + Math.max(0, Number(charge.monto ?? 0) - paid)
     }, 0)
 
     return { activeStudents, upToDateStudents, overdueStudents, collected, outstanding }
@@ -139,14 +172,20 @@ export default function Students() {
   const filteredStudents = students
     .filter((student) =>
       normalizedSearch
-        ? columns.some((column) => formatCellValue(getCellValue(student, column, paymentStatusByStudent)).toLocaleLowerCase().includes(normalizedSearch))
+        ? columns.some((column) => formatCellValue(getCellValue(student, column, paymentStatusByStudent, debtByStudent)).toLocaleLowerCase().includes(normalizedSearch))
         : true,
     )
     .sort((firstStudent, secondStudent) => {
       if (!activeSortColumn) return 0
 
-      const firstValue = formatCellValue(getCellValue(firstStudent, activeSortColumn, paymentStatusByStudent))
-      const secondValue = formatCellValue(getCellValue(secondStudent, activeSortColumn, paymentStatusByStudent))
+      if (activeSortColumn === 'debt') {
+        const debtA = debtByStudent[String(firstStudent.id)] ?? 0
+        const debtB = debtByStudent[String(secondStudent.id)] ?? 0
+        return sortDirection === 'asc' ? debtA - debtB : debtB - debtA
+      }
+
+      const firstValue = formatCellValue(getCellValue(firstStudent, activeSortColumn, paymentStatusByStudent, debtByStudent))
+      const secondValue = formatCellValue(getCellValue(secondStudent, activeSortColumn, paymentStatusByStudent, debtByStudent))
       const comparison = firstValue.localeCompare(secondValue, undefined, { numeric: true, sensitivity: 'base' })
 
       return sortDirection === 'asc' ? comparison : -comparison
@@ -274,7 +313,7 @@ export default function Students() {
               >
                 {columns.map((column) => (
                   <option key={column} value={column}>
-                    {column.replaceAll('_', ' ')}
+                    {formatColumnLabel(column)}
                   </option>
                 ))}
               </select>
@@ -349,6 +388,10 @@ export default function Students() {
                                   <span>{formatCellValue(student.cedula_dni)}</span>
                                 </div>
                               </Link>
+                            ) : column === 'debt' ? (
+                              <span className={`student-debt ${(debtByStudent[String(student.id)] ?? 0) > 0 ? 'student-debt-overdue' : 'student-debt-clear'}`}>
+                                {formatCurrency(debtByStudent[String(student.id)] ?? 0)}
+                              </span>
                             ) : column === 'payment_status' ? (
                               <span className={`student-status student-payment-${getPaymentStatusClass(paymentStatusByStudent[String(student.id)])}`}>
                                 <span className="student-status-dot" aria-hidden="true" />
@@ -356,6 +399,7 @@ export default function Students() {
                                   status={formatPaymentStatus(paymentStatusByStudent[String(student.id)])}
                                   studentId={String(student.id)}
                                   studentName={`${formatCellValue(student.nombre)} ${formatCellValue(student.apellido)}`}
+                                  onPaymentSuccess={() => setRefreshIndex((idx) => idx + 1)}
                                 />
                               </span>
                             ) : column === 'estado' ? (
@@ -412,9 +456,14 @@ function formatCellValue(value: unknown) {
   return String(value)
 }
 
+function formatCurrency(amount: number) {
+  return `$${amount.toFixed(2)}`
+}
+
 function formatColumnLabel(column: string) {
   if (column === 'student_identity') return 'Student'
   if (column === 'payment_status') return 'Payment status'
+  if (column === 'debt') return 'Debt'
   return column.replaceAll('_', ' ')
 }
 
@@ -425,8 +474,14 @@ function getStudentInitials(student: Student) {
   return `${firstName.charAt(0)}${lastName.charAt(0)}`.toLocaleUpperCase()
 }
 
-function getCellValue(student: Student, column: string, paymentStatusByStudent: Record<string, PaymentStatus>) {
+function getCellValue(
+  student: Student,
+  column: string,
+  paymentStatusByStudent: Record<string, PaymentStatus>,
+  debtByStudent: Record<string, number>,
+) {
   if (column === 'payment_status') return formatPaymentStatus(paymentStatusByStudent[String(student.id)])
+  if (column === 'debt') return formatCurrency(debtByStudent[String(student.id)] ?? 0)
   return student[column]
 }
 

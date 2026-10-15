@@ -752,6 +752,20 @@ h1 span {
   color: var(--muted);
 }
 
+.student-debt {
+  display: inline-block;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.student-debt-overdue {
+  color: var(--mainred);
+}
+
+.student-debt-clear {
+  color: #2e8b57;
+}
+
 .student-belt-white .student-status-dot {
   background: #fff;
   border: 1px solid #aeb4b8;
